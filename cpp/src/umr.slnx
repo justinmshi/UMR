@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="encode/encode.vcxproj" Id="6ef37580-6a48-43b3-b78b-c6a77de9e22b" />
+  <Project Path="example/example.vcxproj" Id="05808d47-8258-4087-99ad-c7f05d4c9244" />
+</Solution>
