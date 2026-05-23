@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -8,46 +7,63 @@ namespace UMR
 {
   public class Recorder : MonoBehaviour
   {
-    private static class Native
-    {
-      [DllImport("umr_encode", EntryPoint = "umr_encode_create")]
-      public static extern IntPtr UMREncodeCreate(int width, int height);
-      [DllImport("umr_encode", EntryPoint = "umr_encode_begin")]
-      public static extern byte UMREncodeBegin(IntPtr encoder, string filename);
-      [DllImport("umr_encode", EntryPoint = "umr_encode_encode")]
-      public static extern byte UMREncodeEncode(IntPtr encoder, byte[] data, long pts);
-      [DllImport("umr_encode", EntryPoint = "umr_encode_end")]
-      public static extern byte UMREncodeEnd(IntPtr encoder);
-      [DllImport("umr_encode", EntryPoint = "umr_encode_destroy")]
-      public static extern void UMREncodeDestroy(IntPtr encoder);
-    }
+    private const int CodecID = 27; // H.264
+    private const long BitRate = 8000000;
 
     private readonly Queue<(long, AsyncGPUReadbackRequest)> _requestQueue = new();
 
-    private bool _recording = false;
-    private RenderTexture _screenRT;
-    private RenderTexture _vFlipRT;
-    private IntPtr _encoder;
+    private IntPtr _encoder = IntPtr.Zero;
+    private Camera _camera;
+    private RenderTexture _vFlipRT = null;
+    private RenderTexture _screenRT = null;
     private double _startTime;
+    private bool _recording = false;
 
     public bool Begin(string filename)
     {
-      if (_recording)
+      if (_encoder != IntPtr.Zero)
       {
         return false;
       }
 
-      if (_requestQueue.Count > 0)
+      int width = 0;
+      int height = 0;
+      bool vFlip = false;
+      bool screen = false;
+      if (_camera != null)
+      {
+        if (_camera.targetTexture != null)
+        {
+          width = _camera.targetTexture.width;
+          height = _camera.targetTexture.height;
+          vFlip = true;
+        }
+        else
+        {
+          width = Screen.width;
+          height = Screen.height;
+          vFlip = !SystemInfo.graphicsUVStartsAtTop;
+          screen = true;
+        }
+      }
+
+      _encoder = Native.UMREncodeBegin(filename, CodecID, width, height, BitRate);
+      if (_encoder == IntPtr.Zero)
       {
         return false;
       }
-
-      if (Native.UMREncodeBegin(_encoder, filename) == 0)
+      if (vFlip)
       {
-        return false;
+        _vFlipRT = new RenderTexture(width, height, 0);
       }
-
+      if (screen)
+      {
+        _screenRT = new RenderTexture(width, height, 0);
+      }
       _startTime = -1;
+
+      RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
+
       _recording = true;
 
       return true;
@@ -62,11 +78,21 @@ namespace UMR
 
       if (_requestQueue.Count == 0)
       {
-        if (Native.UMREncodeEnd(_encoder) == 0)
+        if (Native.UMREncodeEnd(ref _encoder) == 0)
         {
           return false;
         }
+        if (_screenRT != null)
+        {
+          _screenRT.Release();
+        }
+        if (_vFlipRT != null)
+        {
+          _vFlipRT.Release();
+        }
       }
+
+      RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
 
       _recording = false;
 
@@ -75,61 +101,30 @@ namespace UMR
 
     private void Awake()
     {
-      _screenRT = null;
-      _vFlipRT = null;
-      Camera camera = GetComponent<Camera>();
-      int width = 0;
-      int height = 0;
-      if (camera != null)
-      {
-        if (camera.targetTexture != null)
-        {
-          width = camera.targetTexture.width;
-          height = camera.targetTexture.height;
-        }
-        else
-        {
-          width = Screen.width;
-          height = Screen.height;
-          _screenRT = new RenderTexture(width, height, 0);
-        }
-        if (!SystemInfo.graphicsUVStartsAtTop || camera.targetTexture != null)
-        {
-          _vFlipRT = new RenderTexture(width, height, 0);
-        }
-      }
-      _encoder = Native.UMREncodeCreate(width, height);
-
-      RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
+      _camera = GetComponent<Camera>();
     }
 
     private void OnDestroy()
     {
-      RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
+      if (_encoder != IntPtr.Zero)
+      {
+        if (_screenRT != null)
+        {
+          _screenRT.Release();
+        }
+        if (_vFlipRT != null)
+        {
+          _vFlipRT.Release();
+        }
+        Native.UMREncodeEnd(ref _encoder);
 
-      if (_recording || _requestQueue.Count > 0)
-      {
-        Native.UMREncodeEnd(_encoder);
-      }
-      Native.UMREncodeDestroy(_encoder);
-      if (_vFlipRT != null)
-      {
-        _vFlipRT.Release();
-      }
-      if (_screenRT != null)
-      {
-        _screenRT.Release();
+        RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
       }
     }
 
     private void OnEndCameraRendering(ScriptableRenderContext context, Camera camera)
     {
-      if (!_recording)
-      {
-        return;
-      }
-
-      if (camera.gameObject != gameObject)
+      if (camera != _camera)
       {
         return;
       }
@@ -175,7 +170,15 @@ namespace UMR
 
       if (!_recording && _requestQueue.Count == 0)
       {
-        Native.UMREncodeEnd(_encoder);
+        if (_screenRT != null)
+        {
+          _screenRT.Release();
+        }
+        if (_vFlipRT != null)
+        {
+          _vFlipRT.Release();
+        }
+        Native.UMREncodeEnd(ref _encoder);
       }
     }
   }

@@ -8,6 +8,8 @@
 constexpr int64_t COLOR_PERIOD = 5 * 1000;
 constexpr int32_t WIDTH = 1920;
 constexpr int32_t HEIGHT = 1080;
+constexpr int32_t CODEC_ID = 27;
+constexpr int64_t BIT_RATE = 8000000;
 constexpr int64_t DURATION = 10 * 1000;
 constexpr int64_t FRAME_TIME = 1000 / 30;
 
@@ -24,19 +26,16 @@ static void generate_data(uint8_t* data, int64_t pts) {
 int main() {
   uint8_t* data = new uint8_t[WIDTH * HEIGHT * 4];
 
-  void* encoder = umr_encode_create(WIDTH, HEIGHT);
-  std::cout << "umr_encode create: " << (encoder ? "success" : "failure") << "\n";
-
-  std::cout << "umr_encode begin: " << (umr_encode_begin(encoder, "umr_example.mp4") ? "success" : "failure") << "\n";
+  void* encoder = umr_encode_begin("umr_example.mp4", CODEC_ID, WIDTH, HEIGHT, BIT_RATE);
+  std::cout << "umr_encode begin: " << (encoder ? "success" : "failure") << "\n";
 
   for (int64_t pts = 0; pts < DURATION; pts += FRAME_TIME) {
     generate_data(data, pts);
     std::cout << "umr_encode encode (pts: " << pts << "): " << (umr_encode_encode(encoder, data, pts) ? "success" : "failure") << "\n";
   }
 
-  std::cout << "umr_encode end: " << (umr_encode_end(encoder) ? "success" : "failure") << "\n";
-
-  umr_encode_destroy(encoder);
+  std::cout << "umr_encode end: " << (umr_encode_end(&encoder) ? "success" : "failure") << "\n";
+  std::cout << "encoder: " << encoder << "\n";
 
   delete[] data;
 }
