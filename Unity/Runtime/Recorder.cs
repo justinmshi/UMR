@@ -7,71 +7,61 @@ namespace UMR
 {
   public class Recorder : MonoBehaviour
   {
-    private const int CodecID = 27; // H.264
     private const long BitRate = 8000000;
 
-    private readonly Queue<(long, AsyncGPUReadbackRequest)> _requestQueue = new();
+    private readonly Queue<(long, AsyncGPUReadbackRequest, RenderTexture, RenderTexture)> _requestQueue = new();
 
+    private RecorderState _state = RecorderState.Idle;
+    private int _width;
+    private int _height;
     private IntPtr _encoder = IntPtr.Zero;
-    private Camera _camera;
-    private RenderTexture _vFlipRT = null;
-    private RenderTexture _screenRT = null;
     private double _startTime;
-    private bool _recording = false;
 
     public bool Begin(string filename)
     {
-      if (_encoder != IntPtr.Zero)
+      if (_state != RecorderState.Idle)
       {
         return false;
       }
 
-      int width = 0;
-      int height = 0;
-      bool vFlip = false;
-      bool screen = false;
-      if (_camera != null)
+      Camera camera = GetComponent<Camera>();
+      if (camera)
       {
-        if (_camera.targetTexture != null)
+        if (camera.targetTexture)
         {
-          width = _camera.targetTexture.width;
-          height = _camera.targetTexture.height;
-          vFlip = true;
+          _width = camera.targetTexture.width;
+          _height = camera.targetTexture.height;
         }
         else
         {
-          width = Screen.width;
-          height = Screen.height;
-          vFlip = !SystemInfo.graphicsUVStartsAtTop;
-          screen = true;
+          _width = Screen.width;
+          _height = Screen.height;
         }
       }
+      else
+      {
+        _width = 0;
+        _height = 0;
+      }
 
-      _encoder = Native.UMREncodeBegin(filename, CodecID, width, height, BitRate);
+      _encoder = Native.UMREncodeBegin(filename, (int)CodecID.H264, _width, _height, BitRate);
       if (_encoder == IntPtr.Zero)
       {
         return false;
       }
-      if (vFlip)
-      {
-        _vFlipRT = new RenderTexture(width, height, 0);
-      }
-      if (screen)
-      {
-        _screenRT = new RenderTexture(width, height, 0);
-      }
+
       _startTime = -1;
 
-      RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
+      _state = RecorderState.Recording;
 
-      _recording = true;
+      RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
 
       return true;
     }
 
     public bool End()
     {
-      if (!_recording)
+      if (_state != RecorderState.Recording)
       {
         return false;
       }
@@ -82,63 +72,77 @@ namespace UMR
         {
           return false;
         }
-        if (_screenRT != null)
-        {
-          _screenRT.Release();
-        }
-        if (_vFlipRT != null)
-        {
-          _vFlipRT.Release();
-        }
+
+        _state = RecorderState.Idle;
+      }
+      else
+      {
+        _state = RecorderState.FinishingUp;
       }
 
       RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
 
-      _recording = false;
-
       return true;
-    }
-
-    private void Awake()
-    {
-      _camera = GetComponent<Camera>();
     }
 
     private void OnDestroy()
     {
-      if (_encoder != IntPtr.Zero)
+      if (_state != RecorderState.Idle)
       {
-        if (_screenRT != null)
-        {
-          _screenRT.Release();
-        }
-        if (_vFlipRT != null)
-        {
-          _vFlipRT.Release();
-        }
         Native.UMREncodeEnd(ref _encoder);
+      }
 
+      if (_state == RecorderState.Recording)
+      {
         RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
       }
     }
 
     private void OnEndCameraRendering(ScriptableRenderContext context, Camera camera)
     {
-      if (camera != _camera)
+      if (camera.gameObject != gameObject)
+      {
+        return;
+      }
+
+      int width;
+      int height;
+      bool screen;
+      bool vFlip;
+      if (camera.targetTexture)
+      {
+        width = camera.targetTexture.width;
+        height = camera.targetTexture.height;
+        screen = false;
+        vFlip = true;
+      }
+      else
+      {
+        width = Screen.width;
+        height = Screen.height;
+        screen = true;
+        vFlip = !SystemInfo.graphicsUVStartsAtTop;
+      }
+
+      if (width != _width || height != _height)
       {
         return;
       }
 
       RenderTexture rt = camera.targetTexture;
-      if (rt == null)
+      RenderTexture screenRT = null;
+      RenderTexture vFlipRT = null;
+      if (screen)
       {
-        ScreenCapture.CaptureScreenshotIntoRenderTexture(_screenRT);
-        rt = _screenRT;
+        screenRT = RenderTexture.GetTemporary(width, height, 0);
+        ScreenCapture.CaptureScreenshotIntoRenderTexture(screenRT);
+        rt = screenRT;
       }
-      if (_vFlipRT != null)
+      if (vFlip)
       {
-        Graphics.Blit(rt, _vFlipRT, new Vector2(1, -1), new Vector2(0, 1));
-        rt = _vFlipRT;
+        vFlipRT = RenderTexture.GetTemporary(width, height, 0);
+        Graphics.Blit(rt, vFlipRT, new Vector2(1, -1), new Vector2(0, 1));
+        rt = vFlipRT;
       }
 
       if (_startTime < 0)
@@ -148,37 +152,37 @@ namespace UMR
       long pts = Convert.ToInt64((Time.realtimeSinceStartupAsDouble - _startTime) * 1000);
 
       AsyncGPUReadbackRequest request = AsyncGPUReadback.Request(rt, 0, AsyncGPUReadbackRequestCallback);
-
-      _requestQueue.Enqueue((pts, request));
+      _requestQueue.Enqueue((pts, request, screenRT, vFlipRT));
     }
 
     private void AsyncGPUReadbackRequestCallback(AsyncGPUReadbackRequest _)
     {
       while (_requestQueue.Count > 0 && _requestQueue.Peek().Item2.done)
       {
-        (long pts, AsyncGPUReadbackRequest request) = _requestQueue.Dequeue();
+        (long pts, AsyncGPUReadbackRequest request, RenderTexture screenRT, RenderTexture vFlipRT) = _requestQueue.Dequeue();
 
-        if (request.hasError)
+        if (!request.hasError)
         {
-          continue;
+          byte[] data = request.GetData<Color32>().Reinterpret<byte>(4).ToArray();
+          Native.UMREncodeEncode(_encoder, data, pts);
         }
 
-        byte[] data = request.GetData<Color32>().Reinterpret<byte>(4).ToArray();
+        if (screenRT)
+        {
+          RenderTexture.ReleaseTemporary(screenRT);
+        }
 
-        Native.UMREncodeEncode(_encoder, data, pts);
+        if (vFlipRT)
+        {
+          RenderTexture.ReleaseTemporary(vFlipRT);
+        }
       }
 
-      if (!_recording && _requestQueue.Count == 0)
+      if (_state == RecorderState.FinishingUp && _requestQueue.Count == 0)
       {
-        if (_screenRT != null)
-        {
-          _screenRT.Release();
-        }
-        if (_vFlipRT != null)
-        {
-          _vFlipRT.Release();
-        }
         Native.UMREncodeEnd(ref _encoder);
+
+        _state = RecorderState.Idle;
       }
     }
   }
