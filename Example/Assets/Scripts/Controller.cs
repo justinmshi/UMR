@@ -19,7 +19,7 @@ public class Controller : MonoBehaviour
 
     if (_rt)
     {
-      _camera.targetTexture = new RenderTexture(1024, 1024, 32);
+      _camera.targetTexture = new(1024, 1024, 32);
     }
   }
 
