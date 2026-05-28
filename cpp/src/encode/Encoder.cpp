@@ -62,11 +62,8 @@ UMR::Encoder::~Encoder() {
     avcodec_free_context(&m_audio_codec_context);
   }
   sws_freeContext(m_sws_context);
-  if (m_yuv420p_frame) {
-    av_frame_free(&m_yuv420p_frame);
-  }
-  if (m_rgba_frame) {
-    av_frame_free(&m_rgba_frame);
+  if (m_video_frame) {
+    av_frame_free(&m_video_frame);
   }
   if (m_video_codec_context) {
     avcodec_free_context(&m_video_codec_context);
@@ -80,18 +77,21 @@ UMR::Encoder::~Encoder() {
 }
 
 bool UMR::Encoder::encode(uint8_t* data, int64_t pts) {
-  if (av_frame_make_writable(m_rgba_frame) < 0) {
+  int stride = m_sws_context->src_w * 4;
+  if (sws_scale(
+    m_sws_context,
+    &data,
+    &stride,
+    0,
+    m_sws_context->src_h,
+    m_video_frame->data,
+    m_video_frame->linesize
+  ) != m_sws_context->dst_h) {
     return false;
   }
-  for (int y = 0; y < m_rgba_frame->height; y++) {
-    memcpy(m_rgba_frame->data[0] + y * m_rgba_frame->linesize[0], data + y * m_rgba_frame->width * 4, m_rgba_frame->width * 4);
-  }
-  if (sws_scale_frame(m_sws_context, m_yuv420p_frame, m_rgba_frame) < 0) {
-    return false;
-  }
-  m_yuv420p_frame->pts = pts;
+  m_video_frame->pts = pts;
 
-  return encode(m_yuv420p_frame);
+  return encode(m_video_frame);
 }
 
 bool UMR::Encoder::end() {
@@ -111,16 +111,14 @@ UMR::Encoder::Encoder() {}
 UMR::Encoder::Encoder(Encoder&& other) noexcept:
   m_format_context(other.m_format_context),
   m_video_codec_context(other.m_video_codec_context),
-  m_rgba_frame(other.m_rgba_frame),
-  m_yuv420p_frame(other.m_yuv420p_frame),
+  m_video_frame(other.m_video_frame),
   m_sws_context(other.m_sws_context),
   m_audio_codec_context(other.m_audio_codec_context),
   m_audio_frame(other.m_audio_frame),
   m_packet(other.m_packet) {
   other.m_format_context = nullptr;
   other.m_video_codec_context = nullptr;
-  other.m_rgba_frame = nullptr;
-  other.m_yuv420p_frame = nullptr;
+  other.m_video_frame = nullptr;
   other.m_sws_context = nullptr;
   other.m_audio_codec_context = nullptr;
   other.m_audio_frame = nullptr;
@@ -162,19 +160,14 @@ bool UMR::Encoder::set_up_video(
     return false;
   }
 
-  m_rgba_frame = av_frame_alloc();
-  if (!m_rgba_frame) {
+  m_video_frame = av_frame_alloc();
+  if (!m_video_frame) {
     return false;
   }
-  m_rgba_frame->format = AVPixelFormat::AV_PIX_FMT_RGBA;
-  m_rgba_frame->width = m_video_codec_context->width;
-  m_rgba_frame->height = m_video_codec_context->height;
-  if (av_frame_get_buffer(m_rgba_frame, 0) < 0) {
-    return false;
-  }
-
-  m_yuv420p_frame = av_frame_alloc();
-  if (!m_yuv420p_frame) {
+  m_video_frame->format = m_video_codec_context->pix_fmt;
+  m_video_frame->width = m_video_codec_context->width;
+  m_video_frame->height = m_video_codec_context->height;
+  if (av_frame_get_buffer(m_video_frame, 0) < 0) {
     return false;
   }
 
@@ -182,7 +175,7 @@ bool UMR::Encoder::set_up_video(
   m_sws_context = sws_getContext(
     m_video_codec_context->width,
     m_video_codec_context->height,
-    static_cast<AVPixelFormat>(m_rgba_frame->format),
+    AVPixelFormat::AV_PIX_FMT_RGBA,
     m_video_codec_context->width,
     m_video_codec_context->height,
     m_video_codec_context->pix_fmt,

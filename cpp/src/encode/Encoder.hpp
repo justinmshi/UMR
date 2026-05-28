@@ -31,8 +31,7 @@ namespace UMR {
   private:
     AVFormatContext* m_format_context = nullptr;
     AVCodecContext* m_video_codec_context = nullptr;
-    AVFrame* m_rgba_frame = nullptr;
-    AVFrame* m_yuv420p_frame = nullptr;
+    AVFrame* m_video_frame = nullptr;
     SwsContext* m_sws_context = nullptr;
     AVCodecContext* m_audio_codec_context = nullptr;
     AVFrame* m_audio_frame = nullptr;
