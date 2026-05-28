@@ -1,5 +1,4 @@
 #include <utility>
-#include <cstring>
 
 #include "Encoder.hpp"
 
@@ -55,19 +54,25 @@ UMR::Encoder::~Encoder() {
   if (m_packet) {
     av_packet_free(&m_packet);
   }
+
   if (m_audio_frame) {
     av_frame_free(&m_audio_frame);
   }
+
   if (m_audio_codec_context) {
     avcodec_free_context(&m_audio_codec_context);
   }
+
   sws_freeContext(m_sws_context);
+
   if (m_video_frame) {
     av_frame_free(&m_video_frame);
   }
+
   if (m_video_codec_context) {
     avcodec_free_context(&m_video_codec_context);
   }
+
   if (m_format_context) {
     if (m_format_context->pb) {
       avio_closep(&m_format_context->pb);
@@ -95,7 +100,7 @@ bool UMR::Encoder::encode(uint8_t* data, int64_t pts) {
 }
 
 bool UMR::Encoder::end() {
-  if (!encode(static_cast<AVFrame*>(nullptr))) {
+  if (!encode(nullptr)) {
     return false;
   }
 

@@ -35,10 +35,12 @@ int main() {
 
   for (int64_t pts = 0; pts < DURATION; pts += FRAME_TIME) {
     generate_data(data, pts);
-    std::cout << "umr_encode encode (pts: " << pts << "): " << (umr_encode_encode(encoder, data, pts) ? "success" : "failure") << "\n";
+    bool encode_success = umr_encode_encode(encoder, data, pts);
+    std::cout << "umr_encode encode (pts: " << pts << "): " << (encode_success ? "success" : "failure") << "\n";
   }
 
-  std::cout << "umr_encode end: " << (umr_encode_end(&encoder) ? "success" : "failure") << "\n";
+  bool end_success = umr_encode_end(&encoder);
+  std::cout << "umr_encode end: " << (end_success ? "success" : "failure") << "\n";
   std::cout << "encoder: " << encoder << "\n";
 
   delete[] data;

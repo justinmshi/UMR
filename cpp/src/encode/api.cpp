@@ -39,6 +39,7 @@ uint8_t umr_encode_end(void** encoder) {
   }
 
   UMR::Encoder* cast_encoder = static_cast<UMR::Encoder*>(*encoder);
+
   if (!cast_encoder->end()) {
     return false;
   }
