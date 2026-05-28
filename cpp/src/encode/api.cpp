@@ -3,17 +3,25 @@
 
 void* umr_encode_begin(
   const char* filename,
-  int32_t codec_id,
+  int32_t video_codec_id,
   int32_t width,
   int32_t height,
-  int64_t bit_rate
+  int64_t video_bit_rate,
+  int32_t audio_codec_id,
+  int32_t sample_rate,
+  int64_t audio_bit_rate,
+  int32_t channels
 ) {
   return UMR::Encoder::begin(
     filename,
-    static_cast<AVCodecID>(codec_id),
+    static_cast<AVCodecID>(video_codec_id),
     width,
     height,
-    bit_rate
+    video_bit_rate,
+    static_cast<AVCodecID>(audio_codec_id),
+    sample_rate,
+    audio_bit_rate,
+    channels
   );
 }
 

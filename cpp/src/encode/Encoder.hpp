@@ -16,7 +16,11 @@ namespace UMR {
       AVCodecID video_codec_id,
       int width,
       int height,
-      int64_t video_bit_rate
+      int64_t video_bit_rate,
+      AVCodecID audio_codec_id,
+      int sample_rate,
+      int64_t audio_bit_rate,
+      int channels
     );
 
     ~Encoder();
@@ -30,6 +34,8 @@ namespace UMR {
     AVFrame* m_rgba_frame = nullptr;
     AVFrame* m_yuv420p_frame = nullptr;
     SwsContext* m_sws_context = nullptr;
+    AVCodecContext* m_audio_codec_context = nullptr;
+    AVFrame* m_audio_frame = nullptr;
     AVPacket* m_packet = nullptr;
 
     Encoder();
@@ -41,7 +47,7 @@ namespace UMR {
       int height,
       int64_t bit_rate
     );
-    bool set_up_audio();
+    bool set_up_audio(AVCodecID codec_id, int sample_rate, int64_t bit_rate, int channels);
     bool encode(AVFrame* frame);
   };
 }

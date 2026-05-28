@@ -8,8 +8,12 @@
 constexpr int64_t COLOR_PERIOD = 5 * 1000;
 constexpr int32_t WIDTH = 1920;
 constexpr int32_t HEIGHT = 1080;
-constexpr int32_t CODEC_ID = 27;
-constexpr int64_t BIT_RATE = 8000000;
+constexpr int32_t VIDEO_CODEC_ID = 27;
+constexpr int64_t VIDEO_BIT_RATE = 8000000;
+constexpr int32_t AUDIO_CODEC_ID = 86018;
+constexpr int64_t AUDIO_BIT_RATE = 128000;
+constexpr int32_t SAMPLE_RATE = 44100;
+constexpr int32_t CHANNELS = 2;
 constexpr int64_t DURATION = 10 * 1000;
 constexpr int64_t FRAME_TIME = 1000 / 30;
 
@@ -26,7 +30,7 @@ static void generate_data(uint8_t* data, int64_t pts) {
 int main() {
   uint8_t* data = new uint8_t[WIDTH * HEIGHT * 4];
 
-  void* encoder = umr_encode_begin("umr_example.mp4", CODEC_ID, WIDTH, HEIGHT, BIT_RATE);
+  void* encoder = umr_encode_begin("umr_example.mp4", VIDEO_CODEC_ID, WIDTH, HEIGHT, VIDEO_BIT_RATE, AUDIO_CODEC_ID, SAMPLE_RATE, AUDIO_BIT_RATE, CHANNELS);
   std::cout << "umr_encode begin: " << (encoder ? "success" : "failure") << "\n";
 
   for (int64_t pts = 0; pts < DURATION; pts += FRAME_TIME) {

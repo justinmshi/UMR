@@ -15,10 +15,14 @@
 extern "C" {
   UMR_ENCODE_API void* umr_encode_begin(
     const char* filename,
-    int32_t codec_id,
+    int32_t video_codec_id,
     int32_t width,
     int32_t height,
-    int64_t bit_rate
+    int64_t video_bit_rate,
+    int32_t audio_codec_id,
+    int32_t sample_rate,
+    int64_t audio_bit_rate,
+    int32_t channels
   );
   UMR_ENCODE_API uint8_t umr_encode_encode(void* encoder, uint8_t* data, int64_t pts);
   UMR_ENCODE_API uint8_t umr_encode_end(void** encoder);
