@@ -4,6 +4,8 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
+#include <libswresample/swresample.h>
+#include <libavutil/audio_fifo.h>
 }
 
 #include <cstdint>
@@ -20,12 +22,14 @@ namespace UMR {
       AVCodecID audio_codec_id,
       int sample_rate,
       int64_t audio_bit_rate,
-      int channels
+      int channels,
+      int audio_buffer_size
     );
 
     ~Encoder();
 
-    bool encode(uint8_t* data, int64_t pts);
+    bool send_video(uint8_t* data, int64_t pts);
+    bool send_audio(float* data);
     bool end();
 
   private:
@@ -35,18 +39,29 @@ namespace UMR {
     SwsContext* m_sws_context = nullptr;
     AVCodecContext* m_audio_codec_context = nullptr;
     AVFrame* m_audio_frame = nullptr;
+    SwrContext* m_swr_context = nullptr;
+    AVAudioFifo* m_audio_fifo = nullptr;
+    int m_audio_buffer_size = 0;
+    float** m_audio_buffers = nullptr;
+    int64_t m_next_audio_pts = 0;
     AVPacket* m_packet = nullptr;
 
     Encoder();
     Encoder(Encoder&& other) noexcept;
 
-    bool set_up_video(
+    bool initialize_video(
       AVCodecID codec_id,
       int width,
       int height,
       int64_t bit_rate
     );
-    bool set_up_audio(AVCodecID codec_id, int sample_rate, int64_t bit_rate, int channels);
-    bool encode(AVFrame* frame);
+    bool initialize_audio(
+      AVCodecID codec_id,
+      int sample_rate,
+      int64_t bit_rate,
+      int channels,
+      int buffer_size
+    );
+    bool encode(AVMediaType media_type, AVFrame* frame);
   };
 }

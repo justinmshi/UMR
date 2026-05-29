@@ -10,7 +10,8 @@ void* umr_encode_begin(
   int32_t audio_codec_id,
   int32_t sample_rate,
   int64_t audio_bit_rate,
-  int32_t channels
+  int32_t channels,
+  int32_t audio_buffer_size
 ) {
   return UMR::Encoder::begin(
     filename,
@@ -21,16 +22,25 @@ void* umr_encode_begin(
     static_cast<AVCodecID>(audio_codec_id),
     sample_rate,
     audio_bit_rate,
-    channels
+    channels,
+    audio_buffer_size
   );
 }
 
-uint8_t umr_encode_encode(void* encoder, uint8_t* data, int64_t pts) {
+uint8_t umr_encode_send_video(void* encoder, uint8_t* data, int64_t pts) {
   if (!encoder) {
     return false;
   }
 
-  return static_cast<UMR::Encoder*>(encoder)->encode(data, pts);
+  return static_cast<UMR::Encoder*>(encoder)->send_video(data, pts);
+}
+
+uint8_t umr_encode_send_audio(void* encoder, float* data) {
+  if (!encoder) {
+    return false;
+  }
+
+  return static_cast<UMR::Encoder*>(encoder)->send_audio(data);
 }
 
 uint8_t umr_encode_end(void** encoder) {

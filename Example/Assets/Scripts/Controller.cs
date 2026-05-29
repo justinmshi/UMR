@@ -45,6 +45,6 @@ public class Controller : MonoBehaviour
 
   private string GetFilename()
   {
-    return $"{name}_{GetInstanceID()}_{Convert.ToInt32(Time.realtimeSinceStartup * 1000)}.mp4";
+    return $"{name}_{GetInstanceID()}_{Convert.ToInt32(Time.realtimeSinceStartup * 1000)}";
   }
 }

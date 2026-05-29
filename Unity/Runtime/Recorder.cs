@@ -13,17 +13,21 @@ namespace UMR
 {
   public class Recorder : MonoBehaviour
   {
-    private const long BitRate = 8000000;
+    private const long VideoBitRate = 8000000;
+    private const long AudioBitRate = 128000;
 
-    private readonly Queue<(long, AsyncGPUReadbackRequest, RenderTexture, RenderTexture, NativeArray<byte>)> _requests = new();
-    private readonly ConcurrentStack<NativeArray<byte>> _buffers = new();
+    private readonly Queue<(long, AsyncGPUReadbackRequest, RenderTexture, RenderTexture, NativeArray<byte>)> _requests = new(); // TODO: rename
+    private readonly ConcurrentStack<NativeArray<byte>> _buffers = new(); // TODO: rename
 
     private RecorderState _state = RecorderState.Idle;
     private int _width;
     private int _height;
+    private int _sampleRate;
+    private int _channels;
+    private int _audioBufferSize;
     private IntPtr _encoder = IntPtr.Zero;
     private double _startTime;
-    private Channel<(long, NativeArray<byte>)> _encodeChannel;
+    private Channel<(long, NativeArray<byte>)> _encodeChannel; // TODO: rename this and below
     private CancellationTokenSource _encodeCTS;
     private Task _encodeTask;
 
@@ -35,6 +39,13 @@ namespace UMR
       }
 
       Camera camera = GetComponent<Camera>();
+      AudioListener audioListener = GetComponent<AudioListener>();
+
+      if (!camera && !audioListener)
+      {
+        return false;
+      }
+
       if (camera)
       {
         if (camera.targetTexture)
@@ -54,7 +65,70 @@ namespace UMR
         _height = 0;
       }
 
-      _encoder = Native.UMREncodeBegin(filename, (int)CodecID.H264, _width, _height, BitRate);
+      if (audioListener)
+      {
+        AudioConfiguration audioConfig = AudioSettings.GetConfiguration();
+        _sampleRate = audioConfig.sampleRate;
+        switch (audioConfig.speakerMode)
+        {
+          case AudioSpeakerMode.Mono:
+            {
+              _channels = 1;
+              break;
+            }
+          case AudioSpeakerMode.Stereo:
+          case AudioSpeakerMode.Prologic:
+            {
+              _channels = 2;
+              break;
+            }
+          case AudioSpeakerMode.Quad:
+            {
+              _channels = 4;
+              break;
+            }
+          case AudioSpeakerMode.Surround:
+            {
+              _channels = 5;
+              break;
+            }
+          case AudioSpeakerMode.Mode5point1:
+            {
+              _channels = 6;
+              break;
+            }
+          case AudioSpeakerMode.Mode7point1:
+            {
+              _channels = 8;
+              break;
+            }
+          default:
+            {
+              _channels = 0;
+              break;
+            }
+        }
+        _audioBufferSize = audioConfig.dspBufferSize;
+      }
+      else
+      {
+        _sampleRate = 0;
+        _channels = 0;
+        _audioBufferSize = 0;
+      }
+
+      _encoder = Native.UMREncodeBegin(
+        $"{filename}.{(camera ? "mp4" : "m4a")}",
+        (int)(camera ? VideoCodecID.H264 : VideoCodecID.NONE),
+        _width,
+        _height,
+        camera ? VideoBitRate : 0,
+        (int)(audioListener ? AudioCodecID.AAC : AudioCodecID.NONE),
+        _sampleRate,
+        audioListener ? AudioBitRate : 0,
+        _channels,
+        _audioBufferSize
+      );
       if (_encoder == IntPtr.Zero)
       {
         return false;
@@ -63,7 +137,10 @@ namespace UMR
       _startTime = -1;
       _state = RecorderState.Recording;
 
-      RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
+      if (camera)
+      {
+        RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
+      }
 
       _encodeChannel = Channel.CreateUnbounded<(long, NativeArray<byte>)>(new UnboundedChannelOptions
       {
@@ -212,14 +289,14 @@ namespace UMR
         {
           unsafe
           {
-            Native.UMREncodeEncode(_encoder, (IntPtr)NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(data), pts);
+            Native.UMREncodeSendVideo(_encoder, (IntPtr)NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(data), pts);
           }
         }
 
         _buffers.Push(data);
       }
 
-      Native.UMREncodeEnd(ref _encoder);
+      Native.UMREncodeEnd(ref _encoder); // TODO: handle if encoding audio
 
       _state = RecorderState.Idle;
     }
