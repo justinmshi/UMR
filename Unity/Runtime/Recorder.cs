@@ -15,6 +15,7 @@ namespace UMR
   {
     private const long VideoBitRate = 8000000;
     private const long AudioBitRate = 128000;
+    private const int VideoBufferByteLimit = 256000000;
 
     private readonly Queue<(long, AsyncGPUReadbackRequest, RenderTexture, RenderTexture, NativeArray<byte>)> _requests = new(); // TODO: rename
     private readonly ConcurrentStack<NativeArray<byte>> _buffers = new(); // TODO: rename
@@ -30,6 +31,7 @@ namespace UMR
     private Channel<(long, NativeArray<byte>)> _encodeChannel; // TODO: rename this and below
     private CancellationTokenSource _encodeCTS;
     private Task _encodeTask;
+    private int _videoBufferBytes = 0;
 
     public bool Begin(string filename)
     {
@@ -251,7 +253,13 @@ namespace UMR
 
       if (!_buffers.TryPop(out NativeArray<byte> buffer))
       {
+        if (_videoBufferBytes + width * height * 4 > VideoBufferByteLimit)
+        {
+          return;
+        }
+
         buffer = new(width * height * 4, Allocator.Persistent);
+        _videoBufferBytes += buffer.Length;
       }
 
       RenderTexture rt = camera.targetTexture;
