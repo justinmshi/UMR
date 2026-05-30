@@ -3,8 +3,6 @@ using UnityEngine;
 [RequireComponent(typeof(Renderer))]
 public class Cube : MonoBehaviour
 {
-  private const int PositionPeriod = 5;
-
   private void Awake()
   {
     GetComponent<Renderer>().material.color = Color.red;
@@ -15,7 +13,7 @@ public class Cube : MonoBehaviour
     transform.Rotate(50 * Time.deltaTime * Vector3.right);
 
     transform.position = new(
-      15 * Mathf.Sin(2 * Mathf.PI * Time.realtimeSinceStartup / PositionPeriod),
+      15 * Mathf.Sin(2 * Mathf.PI * Time.realtimeSinceStartup / 5),
       transform.position.y,
       transform.position.z
     );

@@ -200,10 +200,12 @@ namespace UMR
           {
             RenderTexture.ReleaseTemporary(screenRT);
           }
+
           if (vFlipRT)
           {
             RenderTexture.ReleaseTemporary(vFlipRT);
           }
+
           data.Dispose();
         }
 
@@ -324,6 +326,7 @@ namespace UMR
         {
           RenderTexture.ReleaseTemporary(screenRT);
         }
+
         if (vFlipRT)
         {
           RenderTexture.ReleaseTemporary(vFlipRT);
