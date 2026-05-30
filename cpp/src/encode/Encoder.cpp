@@ -22,7 +22,7 @@ UMR::Encoder* UMR::Encoder::begin(
     return nullptr;
   }
   if (!(encoder.m_format_context->oformat->flags & AVFMT_NOFILE)) {
-    if (avio_open(&encoder.m_format_context->pb, filename, AVIO_FLAG_WRITE) < 0) {
+    if (avio_open(&encoder.m_format_context->pb, encoder.m_format_context->url, AVIO_FLAG_WRITE) < 0) {
       return nullptr;
     }
   }
@@ -159,6 +159,8 @@ bool UMR::Encoder::send_audio(float* data) {
 
     return encode(AVMediaType::AVMEDIA_TYPE_AUDIO, m_audio_frame);
   }
+
+  return true;
 }
 
 bool UMR::Encoder::end() {
@@ -185,16 +187,13 @@ bool UMR::Encoder::end() {
         return false;
       }
     }
+
     if (!encode(AVMediaType::AVMEDIA_TYPE_AUDIO, nullptr)) {
       return false;
     }
   }
 
-  if (av_write_trailer(m_format_context) != 0) {
-    return false;
-  }
-
-  return true;
+  return av_write_trailer(m_format_context) == 0;
 }
 
 UMR::Encoder::Encoder() {}
@@ -454,7 +453,7 @@ bool UMR::Encoder::encode(AVMediaType media_type, AVFrame* frame) {
     }
   }
 
-  int stream_index = av_find_best_stream(m_format_context, media_type, -1, -1, nullptr, 0);
+  int stream_index = av_find_best_stream(m_format_context, codec_context->codec_type, -1, -1, nullptr, 0);
   if (stream_index < 0) {
     return false;
   }
@@ -466,6 +465,7 @@ bool UMR::Encoder::encode(AVMediaType media_type, AVFrame* frame) {
   while (avcodec_receive_packet(codec_context, m_packet) == 0) {
     av_packet_rescale_ts(m_packet, codec_context->time_base, stream->time_base);
     m_packet->stream_index = stream->index;
+
     if (av_interleaved_write_frame(m_format_context, m_packet) < 0) {
       return false;
     }
