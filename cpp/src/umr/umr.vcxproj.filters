@@ -15,18 +15,24 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="umr.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Encoder.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="api.cpp">
+    <ClCompile Include="Muxer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="umr.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="Encoder.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="api.hpp">
+    <ClInclude Include="Muxer.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
