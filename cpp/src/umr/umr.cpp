@@ -73,9 +73,10 @@ uint8_t umr_mux(void* muxer, void* packets) {
   std::vector<AVPacket*>* cast_packets = static_cast<std::vector<AVPacket*>*>(packets);
   UMR::Muxer* cast_muxer = static_cast<UMR::Muxer*>(muxer);
 
+  bool success = true;
   for (int i = 0; i < cast_packets->size(); i++) {
     if (!cast_muxer->mux((*cast_packets)[i])) {
-      return false;
+      success = false;
     }
 
     av_packet_free(&(*cast_packets)[i]);
@@ -83,7 +84,7 @@ uint8_t umr_mux(void* muxer, void* packets) {
 
   delete cast_packets;
 
-  return true;
+  return success;
 }
 
 uint8_t umr_end(void** encoder, void** muxer) {
@@ -99,10 +100,11 @@ uint8_t umr_end(void** encoder, void** muxer) {
   std::vector<AVPacket*>* packets = cast_encoder->flush();
   UMR::Muxer* cast_muxer = static_cast<UMR::Muxer*>(*muxer);
 
+  bool success = true;
   if (packets) {
     for (int i = 0; i < packets->size(); i++) {
       if (!cast_muxer->mux((*packets)[i])) {
-        return false;
+        success = false;
       }
 
       av_packet_free(&(*packets)[i]);
@@ -121,5 +123,5 @@ uint8_t umr_end(void** encoder, void** muxer) {
   delete cast_muxer;
   *muxer = nullptr;
 
-  return true;
+  return success;
 }
