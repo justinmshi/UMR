@@ -34,6 +34,10 @@ namespace UMR
 
     private RecorderState _state = RecorderState.Idle;
     private int _sampleRate;
+    private int _channels;
+    private int _audioBufferSize;
+    private int _width;
+    private int _height;
     private IntPtr _muxer = IntPtr.Zero;
     private IntPtr _encoder = IntPtr.Zero;
     private double _audioNextTime;
@@ -61,10 +65,11 @@ namespace UMR
         return false;
       }
 
-      // TODO: enforce settings
       _sampleRate = AudioSettings.outputSampleRate;
-      int channels = s_channels[AudioSettings.speakerMode];
-      AudioSettings.GetDSPBufferSize(out int audioBufferSize, out _);
+      _channels = s_channels[AudioSettings.speakerMode];
+      AudioSettings.GetDSPBufferSize(out _audioBufferSize, out _);
+      _width = camera && camera.targetTexture ? camera.targetTexture.width : Screen.width;
+      _height = camera && camera.targetTexture ? camera.targetTexture.height : Screen.height;
       if (Native.UMRBegin(
         ref _muxer,
         $"{filenameWithoutExtension}.{(camera ? "mp4" : "m4a")}",
@@ -72,11 +77,11 @@ namespace UMR
         (int)(audioListener ? AudioCodecID.AAC : AudioCodecID.NONE),
         audioListener ? _sampleRate : 0,
         audioListener ? AudioBitRate : 0,
-        audioListener ? channels : 0,
-        audioListener ? audioBufferSize : 0,
+        audioListener ? _channels : 0,
+        audioListener ? _audioBufferSize : 0,
         (int)(camera ? VideoCodecID.H264 : VideoCodecID.NONE),
-        camera ? camera.targetTexture ? camera.targetTexture.width : Screen.width : 0,
-        camera ? camera.targetTexture ? camera.targetTexture.height : Screen.height : 0,
+        camera ? _width : 0,
+        camera ? _height : 0,
         camera ? VideoBitRate : 0
       ) == 0)
       {
@@ -88,7 +93,7 @@ namespace UMR
       if (audioListener)
       {
         _audioNextTime = -1;
-        _audioGap = new float[channels * audioBufferSize];
+        _audioGap = new float[_channels * _audioBufferSize];
 
         _encodeAudioChannel = Channel.CreateUnbounded<(int, float[])>(new()
         {
@@ -160,6 +165,12 @@ namespace UMR
       }
 
       if (_encodeAudioChannel == null)
+      {
+        return;
+      }
+
+      // TODO: check sample rate
+      if (channels != _channels || data.Length != _channels * _audioBufferSize)
       {
         return;
       }
@@ -251,6 +262,11 @@ namespace UMR
 
       int width = camera.targetTexture ? camera.targetTexture.width : Screen.width;
       int height = camera.targetTexture ? camera.targetTexture.height : Screen.height;
+
+      if (width != _width || height != _height)
+      {
+        return;
+      }
 
       if (!TryGetVideoBuffer(out NativeArray<byte> buffer, width * height * 4))
       {
