@@ -3,7 +3,6 @@ using UMR;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-[RequireComponent(typeof(Camera))]
 [RequireComponent(typeof(Recorder))]
 public class Controller : MonoBehaviour
 {
@@ -17,7 +16,7 @@ public class Controller : MonoBehaviour
     _recorder = GetComponent<Recorder>();
     _camera = GetComponent<Camera>();
 
-    if (_rt)
+    if (_camera && _rt)
     {
       _camera.targetTexture = new(1024, 1024, 32);
     }
@@ -25,7 +24,7 @@ public class Controller : MonoBehaviour
 
   private void OnDestroy()
   {
-    if (_rt)
+    if (_camera && _rt)
     {
       _camera.targetTexture.Release();
     }

@@ -14,7 +14,7 @@ namespace UMR
   {
     private const long AudioBitRate = 128000;
     private const long VideoBitRate = 8000000;
-    private const int AudioBufferByteLimit = 32000000; // TODO
+    private const int AudioBufferByteLimit = 32000000;
     private const int VideoBufferByteLimit = 256000000;
 
     private static readonly Dictionary<AudioSpeakerMode, int> s_channels = new()
@@ -33,16 +33,17 @@ namespace UMR
     private readonly ConcurrentStack<NativeArray<byte>> _videoBuffers = new();
 
     private RecorderState _state = RecorderState.Idle;
+    private int _sampleRate;
     private IntPtr _muxer = IntPtr.Zero;
     private IntPtr _encoder = IntPtr.Zero;
-    private double _audioStartTime; // TODO
-    private Channel<float[]> _encodeAudioChannel;
-    private Task _encodeAudioTask = Task.CompletedTask;
+    private double _audioNextTime;
+    private float[] _audioGap;
+    private Channel<(int, float[])> _encodeAudioChannel = null;
     private double _videoStartTime;
-    private Channel<(NativeArray<byte>, long)> _encodeVideoChannel;
-    private Task _encodeVideoTask = Task.CompletedTask;
+    private Channel<(NativeArray<byte>, long)> _encodeVideoChannel = null;
     private Channel<IntPtr> _muxChannel;
-    private Task _muxTask = Task.CompletedTask;
+    private Task _backgroundTask = Task.CompletedTask;
+    private int _audioBufferBytes = 0;
     private int _videoBufferBytes = 0;
 
     public bool Begin(string filenameWithoutExtension)
@@ -61,16 +62,18 @@ namespace UMR
       }
 
       // TODO: enforce settings
-      AudioConfiguration audioConfig = AudioSettings.GetConfiguration();
+      _sampleRate = AudioSettings.outputSampleRate;
+      int channels = s_channels[AudioSettings.speakerMode];
+      AudioSettings.GetDSPBufferSize(out int audioBufferSize, out _);
       if (Native.UMRBegin(
         ref _muxer,
         $"{filenameWithoutExtension}.{(camera ? "mp4" : "m4a")}",
         ref _encoder,
         (int)(audioListener ? AudioCodecID.AAC : AudioCodecID.NONE),
-        audioListener ? audioConfig.sampleRate : 0,
+        audioListener ? _sampleRate : 0,
         audioListener ? AudioBitRate : 0,
-        audioListener ? s_channels[audioConfig.speakerMode] : 0,
-        audioListener ? audioConfig.dspBufferSize : 0,
+        audioListener ? channels : 0,
+        audioListener ? audioBufferSize : 0,
         (int)(camera ? VideoCodecID.H264 : VideoCodecID.NONE),
         camera ? camera.targetTexture ? camera.targetTexture.width : Screen.width : 0,
         camera ? camera.targetTexture ? camera.targetTexture.height : Screen.height : 0,
@@ -84,13 +87,13 @@ namespace UMR
 
       if (audioListener)
       {
-        _audioStartTime = -1;
+        _audioNextTime = -1;
+        _audioGap = new float[channels * audioBufferSize];
 
-        _encodeAudioChannel = Channel.CreateUnbounded<float[]>(new()
+        _encodeAudioChannel = Channel.CreateUnbounded<(int, float[])>(new()
         {
           SingleReader = true,
         });
-        _encodeAudioTask = Task.Run(EncodeAudioThreadFunction);
       }
 
       if (camera)
@@ -104,14 +107,14 @@ namespace UMR
           SingleReader = true,
           SingleWriter = true
         });
-        _encodeVideoTask = Task.Run(EncodeVideoThreadFunction);
       }
 
       _muxChannel = Channel.CreateUnbounded<IntPtr>(new()
       {
         SingleReader = true
       });
-      _muxTask = Task.Run(MuxThreadFunction);
+
+      _backgroundTask = Task.Run(BackgroundThreadFunction);
 
       return true;
     }
@@ -123,7 +126,15 @@ namespace UMR
         return false;
       }
 
-      if (!_encodeVideoTask.IsCompleted)
+      if (_encodeAudioChannel != null)
+      {
+        if (!_encodeAudioChannel.Writer.TryComplete())
+        {
+          return false;
+        }
+      }
+
+      if (_encodeVideoChannel != null)
       {
         if (_videoRequests.Count == 0)
         {
@@ -141,30 +152,41 @@ namespace UMR
       return true;
     }
 
-    private void OnAudioFilterRead(float[] data, int _)
+    private void OnAudioFilterRead(float[] data, int channels)
     {
-      if (_encodeAudioTask.IsCompleted)
+      if (_state != RecorderState.Recording)
       {
         return;
       }
 
-      if (_state == RecorderState.Recording)
+      if (_encodeAudioChannel == null)
       {
-        if (!_audioBuffers.TryPop(out float[] buffer))
-        {
-          buffer = new float[data.Length];
-        }
-
-        data.CopyTo(buffer, 0);
-
-        if (!_encodeAudioChannel.Writer.TryWrite(buffer))
-        {
-          _audioBuffers.Push(buffer);
-        }
+        return;
       }
-      else
+
+      if (!TryGetAudioBuffer(out float[] buffer, data.Length))
       {
-        _encodeAudioChannel.Writer.TryComplete();
+        return;
+      }
+
+      if (_audioNextTime < 0)
+      {
+        _audioNextTime = AudioSettings.dspTime;
+      }
+      double deltaTime = 1.0 * buffer.Length / channels / _sampleRate;
+      int gaps = 0;
+      while (_audioNextTime + deltaTime / 2 <= AudioSettings.dspTime)
+      {
+        gaps++;
+        _audioNextTime += deltaTime;
+      }
+      _audioNextTime = AudioSettings.dspTime + deltaTime;
+
+      data.CopyTo(buffer, 0);
+
+      if (!_encodeAudioChannel.Writer.TryWrite((gaps, buffer)))
+      {
+        _audioBuffers.Push(buffer);
       }
     }
 
@@ -174,12 +196,12 @@ namespace UMR
       {
         _state = RecorderState.FinishingUp;
 
-        if (!_encodeAudioTask.IsCompleted)
+        if (_encodeAudioChannel != null)
         {
           _encodeAudioChannel.Writer.TryComplete();
         }
 
-        if (!_encodeVideoTask.IsCompleted)
+        if (_encodeVideoChannel != null)
         {
           RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
 
@@ -189,7 +211,7 @@ namespace UMR
 
       if (_state == RecorderState.FinishingUp)
       {
-        _muxTask.Wait();
+        _backgroundTask.Wait();
 
         while (_videoRequests.Count > 0)
         {
@@ -220,26 +242,6 @@ namespace UMR
       }
     }
 
-    private async Task EncodeAudioThreadFunction()
-    {
-      await foreach (float[] data in _encodeAudioChannel.Reader.ReadAllAsync())
-      {
-        IntPtr packets = Native.UMREncodeAudio(_encoder, data);
-
-        _audioBuffers.Push(data);
-
-        if (packets != IntPtr.Zero)
-        {
-          _muxChannel.Writer.TryWrite(packets);
-        }
-      }
-
-      if (_encodeVideoTask.IsCompleted)
-      {
-        _muxChannel.Writer.TryComplete();
-      }
-    }
-
     private void OnEndCameraRendering(ScriptableRenderContext _, Camera camera)
     {
       if (camera.gameObject != gameObject)
@@ -250,16 +252,9 @@ namespace UMR
       int width = camera.targetTexture ? camera.targetTexture.width : Screen.width;
       int height = camera.targetTexture ? camera.targetTexture.height : Screen.height;
 
-      if (!_videoBuffers.TryPop(out NativeArray<byte> buffer))
+      if (!TryGetVideoBuffer(out NativeArray<byte> buffer, width * height * 4))
       {
-        if (_videoBufferBytes + width * height * 4 > VideoBufferByteLimit)
-        {
-          return;
-        }
-
-        buffer = new(width * height * 4, Allocator.Persistent);
-
-        _videoBufferBytes += buffer.Length;
+        return;
       }
 
       RenderTexture rt = camera.targetTexture;
@@ -278,51 +273,73 @@ namespace UMR
         rt = vFlipRT;
       }
 
+      AsyncGPUReadbackRequest request = AsyncGPUReadback.RequestIntoNativeArray(ref buffer, rt, 0, AsyncGPUReadbackRequestCallback);
+
       if (_videoStartTime < 0)
       {
-        _videoStartTime = Time.realtimeSinceStartupAsDouble;
+        _videoStartTime = Time.unscaledTimeAsDouble;
       }
-      long pts = Convert.ToInt64((Time.realtimeSinceStartupAsDouble - _videoStartTime) * 1000);
-
-      AsyncGPUReadbackRequest request = AsyncGPUReadback.RequestIntoNativeArray(ref buffer, rt, 0, AsyncGPUReadbackRequestCallback);
+      long pts = Convert.ToInt64((Time.unscaledTimeAsDouble - _videoStartTime) * 1000);
 
       _videoRequests.Enqueue((request, buffer, pts, screenRT, vFlipRT));
     }
 
-    private async Task EncodeVideoThreadFunction()
+    private async Task BackgroundThreadFunction()
     {
-      await foreach ((NativeArray<byte> data, long pts) in _encodeVideoChannel.Reader.ReadAllAsync())
-      {
-        IntPtr packets;
-        unsafe
-        {
-          packets = Native.UMREncodeVideo(_encoder, (IntPtr)data.GetUnsafeReadOnlyPtr(), pts);
-        }
+      Task encodeAudioTask = _encodeAudioChannel != null ? Task.Run(EncodeAudioThreadFunction) : Task.CompletedTask;
+      Task encodeVideoTask = _encodeVideoChannel != null ? Task.Run(EncodeVideoThreadFunction) : Task.CompletedTask;
+      Task muxTask = Task.Run(MuxThreadFunction);
 
-        _videoBuffers.Push(data);
+      await Task.WhenAll(encodeAudioTask, encodeVideoTask);
 
-        if (packets != IntPtr.Zero)
-        {
-          _muxChannel.Writer.TryWrite(packets);
-        }
-      }
+      _muxChannel.Writer.TryComplete();
 
-      if (_encodeAudioTask.IsCompleted)
-      {
-        _muxChannel.Writer.TryComplete();
-      }
-    }
-
-    private async Task MuxThreadFunction()
-    {
-      await foreach (IntPtr packets in _muxChannel.Reader.ReadAllAsync())
-      {
-        Native.UMRMux(_muxer, packets);
-      }
+      await muxTask;
 
       Native.UMREnd(ref _encoder, ref _muxer);
 
+      _encodeAudioChannel = null;
+      _encodeVideoChannel = null;
+
       _state = RecorderState.Idle;
+    }
+
+    private bool TryGetAudioBuffer(out float[] buffer, int length)
+    {
+      if (_audioBuffers.TryPop(out buffer))
+      {
+        return true;
+      }
+
+      if (_audioBufferBytes + length * sizeof(float) > AudioBufferByteLimit)
+      {
+        return false;
+      }
+
+      buffer = new float[length];
+
+      _audioBufferBytes += length * sizeof(float);
+
+      return true;
+    }
+
+    private bool TryGetVideoBuffer(out NativeArray<byte> buffer, int length)
+    {
+      if (_videoBuffers.TryPop(out buffer))
+      {
+        return true;
+      }
+
+      if (_videoBufferBytes + length * sizeof(byte) > VideoBufferByteLimit)
+      {
+        return false;
+      }
+
+      buffer = new(length, Allocator.Persistent);
+
+      _videoBufferBytes += length * sizeof(byte);
+
+      return true;
     }
 
     private void AsyncGPUReadbackRequestCallback(AsyncGPUReadbackRequest _)
@@ -353,6 +370,58 @@ namespace UMR
       if (_state == RecorderState.FinishingUp && _videoRequests.Count == 0)
       {
         _encodeVideoChannel.Writer.TryComplete();
+      }
+    }
+
+    private async Task EncodeAudioThreadFunction()
+    {
+      await foreach ((int gaps, float[] data) in _encodeAudioChannel.Reader.ReadAllAsync())
+      {
+        for (int i = 0; i < gaps; i++)
+        {
+          IntPtr gapPackets = Native.UMREncodeAudio(_encoder, _audioGap);
+
+          if (gapPackets != IntPtr.Zero)
+          {
+            _muxChannel.Writer.TryWrite(gapPackets);
+          }
+        }
+
+        IntPtr dataPackets = Native.UMREncodeAudio(_encoder, data);
+
+        _audioBuffers.Push(data);
+
+        if (dataPackets != IntPtr.Zero)
+        {
+          _muxChannel.Writer.TryWrite(dataPackets);
+        }
+      }
+    }
+
+    private async Task EncodeVideoThreadFunction()
+    {
+      await foreach ((NativeArray<byte> data, long pts) in _encodeVideoChannel.Reader.ReadAllAsync())
+      {
+        IntPtr packets;
+        unsafe
+        {
+          packets = Native.UMREncodeVideo(_encoder, (IntPtr)data.GetUnsafeReadOnlyPtr(), pts);
+        }
+
+        _videoBuffers.Push(data);
+
+        if (packets != IntPtr.Zero)
+        {
+          _muxChannel.Writer.TryWrite(packets);
+        }
+      }
+    }
+
+    private async Task MuxThreadFunction()
+    {
+      await foreach (IntPtr packets in _muxChannel.Reader.ReadAllAsync())
+      {
+        Native.UMRMux(_muxer, packets);
       }
     }
   }
