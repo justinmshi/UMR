@@ -165,6 +165,10 @@ std::vector<AVPacket*>* UMR::Encoder::flush() {
   if (m_audio_codec_context) {
     int remaining_samples = av_audio_fifo_size(m_audio_fifo);
     if (remaining_samples > 0) {
+      if (av_frame_make_writable(m_audio_frame) < 0) {
+        return nullptr;
+      }
+
       if (av_audio_fifo_read(
         m_audio_fifo,
         reinterpret_cast<void**>(m_audio_frame->data),
