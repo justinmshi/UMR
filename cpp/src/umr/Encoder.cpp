@@ -101,6 +101,10 @@ std::vector<AVPacket*>* UMR::Encoder::encode_audio(float* data) {
   }
 
   if (av_audio_fifo_size(m_audio_fifo) >= m_audio_frame->nb_samples) {
+    if (av_frame_make_writable(m_audio_frame) < 0) {
+      return nullptr;
+    }
+
     if (av_audio_fifo_read(
       m_audio_fifo,
       reinterpret_cast<void**>(m_audio_frame->data),
@@ -125,6 +129,10 @@ std::vector<AVPacket*>* UMR::Encoder::encode_audio(float* data) {
 
 std::vector<AVPacket*>* UMR::Encoder::encode_video(uint8_t* data, int64_t pts) {
   if (!m_video_codec_context) {
+    return nullptr;
+  }
+
+  if (av_frame_make_writable(m_video_frame) < 0) {
     return nullptr;
   }
 
@@ -419,6 +427,7 @@ bool UMR::Encoder::encode(std::vector<AVPacket*>* packets, AVCodecContext* codec
     return false;
   }
 
+  // TODO: handle AVERROR(EAGAIN) (but this should still work because we always drain below afterwards?)
   if (avcodec_send_frame(codec_context, frame) != 0) {
     return false;
   }
