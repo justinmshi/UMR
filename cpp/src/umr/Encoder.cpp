@@ -3,6 +3,18 @@
 #include "Encoder.hpp"
 
 constexpr int DEFAULT_AUDIO_FRAME_SIZE = 10000;
+constexpr const char* H264_ENCODER_NAMES[] { // TODO: handle Linux, properly handle hardware encoding
+  "h264_nvenc",
+  "h264_amf",
+  "h264_qsv",
+#if defined(_WIN32)
+  "h264_mf",
+#elif defined(__APPLE__)
+  "h264_videotoolbox",
+#endif
+  "libopenh264",
+  nullptr
+};
 
 // TODO: separate encoder instances for audio and video?
 UMR::Encoder* UMR::Encoder::create(
@@ -364,26 +376,40 @@ bool UMR::Encoder::initialize_video(
     return false;
   }
 
-  const AVCodec* codec = avcodec_find_encoder(codec_id);
-  if (!codec) {
-    return false;
+  std::vector<const AVCodec*> codecs;
+  if (codec_id == AVCodecID::AV_CODEC_ID_H264) {
+    for (const char* const* h264_encoder_name = H264_ENCODER_NAMES; *h264_encoder_name != nullptr; h264_encoder_name++) {
+      codecs.push_back(avcodec_find_encoder_by_name(*h264_encoder_name));
+    }
+  } else {
+    codecs.push_back(avcodec_find_encoder(codec_id));
   }
 
-  m_video_codec_context = avcodec_alloc_context3(codec);
+  for (const AVCodec* codec : codecs) {
+    if (!codec) {
+      continue;
+    }
+
+    m_video_codec_context = avcodec_alloc_context3(codec);
+    if (!m_video_codec_context) {
+      continue;
+    }
+    m_video_codec_context->width = width;
+    m_video_codec_context->height = height;
+    m_video_codec_context->bit_rate = bit_rate;
+    m_video_codec_context->time_base = {.num = 1, .den = 1000};
+    // m_codec_context->gop_size = gop_size;
+    // m_codec_context->max_b_frames = max_b_frames;
+    m_video_codec_context->pix_fmt = AVPixelFormat::AV_PIX_FMT_YUV420P;
+    if (muxer->global_header()) {
+      m_video_codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    }
+    if (avcodec_open2(m_video_codec_context, codec, nullptr) >= 0) {
+      break;
+    }
+    avcodec_free_context(&m_video_codec_context);
+  }
   if (!m_video_codec_context) {
-    return false;
-  }
-  m_video_codec_context->width = width;
-  m_video_codec_context->height = height;
-  m_video_codec_context->bit_rate = bit_rate;
-  m_video_codec_context->time_base = {.num = 1, .den = 1000};
-  // m_codec_context->gop_size = gop_size;
-  // m_codec_context->max_b_frames = max_b_frames;
-  m_video_codec_context->pix_fmt = AVPixelFormat::AV_PIX_FMT_YUV420P;
-  if (muxer->global_header()) {
-    m_video_codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-  }
-  if (avcodec_open2(m_video_codec_context, codec, nullptr) < 0) {
     return false;
   }
 
