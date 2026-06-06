@@ -53,12 +53,12 @@ void* umr_encode_audio(void* encoder, float* data) {
   return static_cast<UMR::Encoder*>(encoder)->encode_audio(data);
 }
 
-void* umr_encode_video(void* encoder, uint8_t* data, int64_t pts) {
+void* umr_encode_video(void* encoder, int32_t width, int32_t height, uint8_t* data, int64_t pts) {
   if (!encoder) {
     return nullptr;
   }
 
-  return static_cast<UMR::Encoder*>(encoder)->encode_video(data, pts);
+  return static_cast<UMR::Encoder*>(encoder)->encode_video(width, height, data, pts);
 }
 
 uint8_t umr_mux(void* muxer, void* packets) {

@@ -79,7 +79,7 @@ static void generate_media_file(bool audio, bool video) {
     uint8_t* video_data = new uint8_t[WIDTH * HEIGHT * 4];
     for (int64_t pts = 0; pts < DURATION; pts += FRAME_TIME) {
       generate_video_data(video_data, pts);
-      void* packets = umr_encode_video(encoder, video_data, pts);
+      void* packets = umr_encode_video(encoder, WIDTH, HEIGHT, video_data, pts);
       bool mux_video_success = umr_mux(muxer, packets);
       std::cout << "umr mux video (" << pts << "): " << (mux_video_success ? "success" : "failure") << "\n";
     }

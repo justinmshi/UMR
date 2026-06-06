@@ -31,7 +31,7 @@ namespace UMR {
     ~Encoder();
 
     std::vector<AVPacket*>* encode_audio(float* data);
-    std::vector<AVPacket*>* encode_video(uint8_t* data, int64_t pts);
+    std::vector<AVPacket*>* encode_video(int width, int height, uint8_t* data, int64_t pts);
     std::vector<AVPacket*>* flush();
 
   private:

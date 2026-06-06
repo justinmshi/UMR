@@ -3,7 +3,7 @@
 #include "Encoder.hpp"
 
 constexpr int DEFAULT_AUDIO_FRAME_SIZE = 10000;
-constexpr const char* H264_ENCODER_NAMES[] { // TODO: handle Linux, properly handle hardware encoding
+constexpr const char* H264_ENCODER_NAMES[] { // TODO: properly handle hardware encoding
   "h264_nvenc",
   "h264_amf",
   "h264_qsv",
@@ -16,7 +16,6 @@ constexpr const char* H264_ENCODER_NAMES[] { // TODO: handle Linux, properly han
   nullptr
 };
 
-// TODO: separate encoder instances for audio and video?
 UMR::Encoder* UMR::Encoder::create(
   Muxer* muxer,
   AVCodecID audio_codec_id,
@@ -139,7 +138,7 @@ std::vector<AVPacket*>* UMR::Encoder::encode_audio(float* data) {
   return nullptr;
 }
 
-std::vector<AVPacket*>* UMR::Encoder::encode_video(uint8_t* data, int64_t pts) {
+std::vector<AVPacket*>* UMR::Encoder::encode_video(int width, int height, uint8_t* data, int64_t pts) {
   if (!m_video_codec_context) {
     return nullptr;
   }
@@ -148,16 +147,33 @@ std::vector<AVPacket*>* UMR::Encoder::encode_video(uint8_t* data, int64_t pts) {
     return nullptr;
   }
 
-  int stride = m_sws_context->src_w * 4;
+  m_sws_context = sws_getCachedContext(
+    m_sws_context,
+    width,
+    height,
+    AVPixelFormat::AV_PIX_FMT_RGBA,
+    m_video_codec_context->width,
+    m_video_codec_context->height,
+    m_video_codec_context->pix_fmt,
+    SWS_BICUBIC,
+    nullptr,
+    nullptr,
+    nullptr
+  );
+  if (!m_sws_context) {
+    return nullptr;
+  }
+
+  int stride = width * 4;
   if (sws_scale(
     m_sws_context,
     &data,
     &stride,
     0,
-    m_sws_context->src_h,
+    height,
     m_video_frame->data,
     m_video_frame->linesize
-  ) != m_sws_context->dst_h) {
+  ) != m_video_frame->height) {
     return nullptr;
   }
   m_video_frame->pts = pts;
@@ -424,23 +440,6 @@ bool UMR::Encoder::initialize_video(
     return false;
   }
 
-  // TODO: handle variable width/height?
-  m_sws_context = sws_getContext(
-    m_video_codec_context->width,
-    m_video_codec_context->height,
-    AVPixelFormat::AV_PIX_FMT_RGBA,
-    m_video_codec_context->width,
-    m_video_codec_context->height,
-    m_video_codec_context->pix_fmt,
-    SWS_BICUBIC,
-    nullptr,
-    nullptr,
-    nullptr
-  );
-  if (!m_sws_context) {
-    return false;
-  }
-
   if (!muxer->add_stream(m_video_codec_context)) {
     return false;
   }
@@ -457,7 +456,6 @@ bool UMR::Encoder::encode(std::vector<AVPacket*>* packets, AVCodecContext* codec
     return false;
   }
 
-  // TODO: handle AVERROR(EAGAIN) (but this should still work because we always drain below afterwards?)
   if (avcodec_send_frame(codec_context, frame) != 0) {
     return false;
   }

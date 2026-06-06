@@ -23,7 +23,7 @@ namespace UMR
     [DllImport("umr", EntryPoint = "umr_encode_audio")]
     public static extern IntPtr UMREncodeAudio(IntPtr encoder, float[] data);
     [DllImport("umr", EntryPoint = "umr_encode_video")]
-    public static extern IntPtr UMREncodeVideo(IntPtr encoder, IntPtr data, long pts);
+    public static extern IntPtr UMREncodeVideo(IntPtr encoder, int width, int height, IntPtr data, long pts);
     [DllImport("umr", EntryPoint = "umr_mux")]
     public static extern byte UMRMux(IntPtr muxer, IntPtr packets);
     [DllImport("umr", EntryPoint = "umr_end")]

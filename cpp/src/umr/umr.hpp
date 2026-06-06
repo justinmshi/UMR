@@ -28,7 +28,7 @@ extern "C" {
     int64_t video_bit_rate
   );
   UMR_API void* umr_encode_audio(void* encoder, float* data);
-  UMR_API void* umr_encode_video(void* encoder, uint8_t* data, int64_t pts);
+  UMR_API void* umr_encode_video(void* encoder, int32_t width, int32_t height, uint8_t* data, int64_t pts);
   UMR_API uint8_t umr_mux(void* muxer, void* packets);
   UMR_API uint8_t umr_end(void** encoder, void** muxer);
 }

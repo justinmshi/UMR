@@ -36,15 +36,13 @@ namespace UMR
     private int _sampleRate;
     private int _channels;
     private int _audioBufferSize;
-    private int _width;
-    private int _height;
     private IntPtr _muxer = IntPtr.Zero;
     private IntPtr _encoder = IntPtr.Zero;
     private double _audioNextTime;
     private float[] _audioGap;
     private Channel<(int, float[])> _encodeAudioChannel = null;
     private double _videoStartTime;
-    private Channel<(NativeArray<byte>, long)> _encodeVideoChannel = null;
+    private Channel<(int, int, NativeArray<byte>, long)> _encodeVideoChannel = null;
     private Channel<IntPtr> _muxChannel;
     private Task _backgroundTask = Task.CompletedTask;
     private int _audioBufferBytes = 0;
@@ -68,8 +66,8 @@ namespace UMR
       _sampleRate = AudioSettings.outputSampleRate;
       _channels = s_channels[AudioSettings.speakerMode];
       AudioSettings.GetDSPBufferSize(out _audioBufferSize, out _);
-      _width = camera && camera.targetTexture ? camera.targetTexture.width : Screen.width;
-      _height = camera && camera.targetTexture ? camera.targetTexture.height : Screen.height;
+      int width = camera && camera.targetTexture ? camera.targetTexture.width : Screen.width;
+      int height = camera && camera.targetTexture ? camera.targetTexture.height : Screen.height;
       if (Native.UMRBegin(
         ref _muxer,
         $"{filenameWithoutExtension}.{(camera ? "mp4" : "m4a")}",
@@ -80,8 +78,8 @@ namespace UMR
         audioListener ? _channels : 0,
         audioListener ? _audioBufferSize : 0,
         (int)(camera ? VideoCodecID.H264 : VideoCodecID.NONE),
-        camera ? _width : 0,
-        camera ? _height : 0,
+        camera ? width : 0,
+        camera ? height : 0,
         camera ? VideoBitRate : 0
       ) == 0)
       {
@@ -107,7 +105,7 @@ namespace UMR
 
         RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
 
-        _encodeVideoChannel = Channel.CreateUnbounded<(NativeArray<byte>, long)>(new()
+        _encodeVideoChannel = Channel.CreateUnbounded<(int, int, NativeArray<byte>, long)>(new()
         {
           SingleReader = true,
           SingleWriter = true
@@ -244,12 +242,9 @@ namespace UMR
         }
       }
 
-      while (!_videoBuffers.IsEmpty)
+      while (_videoBuffers.TryPop(out NativeArray<byte> buffer))
       {
-        if (_videoBuffers.TryPop(out NativeArray<byte> buffer))
-        {
-          buffer.Dispose();
-        }
+        buffer.Dispose();
       }
     }
 
@@ -262,11 +257,6 @@ namespace UMR
 
       int width = camera.targetTexture ? camera.targetTexture.width : Screen.width;
       int height = camera.targetTexture ? camera.targetTexture.height : Screen.height;
-
-      if (width != _width || height != _height)
-      {
-        return;
-      }
 
       if (!TryGetVideoBuffer(out NativeArray<byte> buffer, width * height * 4))
       {
@@ -341,9 +331,16 @@ namespace UMR
 
     private bool TryGetVideoBuffer(out NativeArray<byte> buffer, int length)
     {
-      if (_videoBuffers.TryPop(out buffer))
+      while (_videoBuffers.TryPop(out buffer))
       {
-        return true;
+        if (buffer.Length >= length)
+        {
+          return true;
+        }
+
+        _videoBufferBytes -= buffer.Length * sizeof(byte);
+
+        buffer.Dispose();
       }
 
       if (_videoBufferBytes + length * sizeof(byte) > VideoBufferByteLimit)
@@ -366,7 +363,7 @@ namespace UMR
 
         if (!request.hasError)
         {
-          if (!_encodeVideoChannel.Writer.TryWrite((data, pts)))
+          if (!_encodeVideoChannel.Writer.TryWrite((request.width, request.height, data, pts)))
           {
             _videoBuffers.Push(data);
           }
@@ -416,12 +413,12 @@ namespace UMR
 
     private async Task EncodeVideoThreadFunction()
     {
-      await foreach ((NativeArray<byte> data, long pts) in _encodeVideoChannel.Reader.ReadAllAsync())
+      await foreach ((int width, int height, NativeArray<byte> data, long pts) in _encodeVideoChannel.Reader.ReadAllAsync())
       {
         IntPtr packets;
         unsafe
         {
-          packets = Native.UMREncodeVideo(_encoder, (IntPtr)data.GetUnsafeReadOnlyPtr(), pts);
+          packets = Native.UMREncodeVideo(_encoder, width, height, (IntPtr)data.GetUnsafeReadOnlyPtr(), pts);
         }
 
         _videoBuffers.Push(data);
