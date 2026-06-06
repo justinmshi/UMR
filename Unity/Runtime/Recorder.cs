@@ -34,13 +34,11 @@ namespace UMR
 
     private RecorderState _state = RecorderState.Idle;
     private int _sampleRate;
-    private int _channels;
-    private int _audioBufferSize;
     private IntPtr _muxer = IntPtr.Zero;
     private IntPtr _encoder = IntPtr.Zero;
     private double _audioNextTime;
     private float[] _audioGap;
-    private Channel<(int, float[])> _encodeAudioChannel = null;
+    private Channel<(int, int, int, int, float[])> _encodeAudioChannel = null;
     private double _videoStartTime;
     private Channel<(int, int, NativeArray<byte>, long)> _encodeVideoChannel = null;
     private Channel<IntPtr> _muxChannel;
@@ -64,8 +62,8 @@ namespace UMR
       }
 
       _sampleRate = AudioSettings.outputSampleRate;
-      _channels = s_channels[AudioSettings.speakerMode];
-      AudioSettings.GetDSPBufferSize(out _audioBufferSize, out _);
+      int channels = s_channels[AudioSettings.speakerMode];
+      AudioSettings.GetDSPBufferSize(out int dspBufferSize, out _);
       int width = camera && camera.targetTexture ? camera.targetTexture.width : Screen.width;
       int height = camera && camera.targetTexture ? camera.targetTexture.height : Screen.height;
       if (Native.UMRBegin(
@@ -75,8 +73,7 @@ namespace UMR
         (int)(audioListener ? AudioCodecID.AAC : AudioCodecID.NONE),
         audioListener ? _sampleRate : 0,
         audioListener ? AudioBitRate : 0,
-        audioListener ? _channels : 0,
-        audioListener ? _audioBufferSize : 0,
+        audioListener ? channels : 0,
         (int)(camera ? VideoCodecID.H264 : VideoCodecID.NONE),
         camera ? width : 0,
         camera ? height : 0,
@@ -91,9 +88,11 @@ namespace UMR
       if (audioListener)
       {
         _audioNextTime = -1;
-        _audioGap = new float[_channels * _audioBufferSize];
+        _audioGap = new float[dspBufferSize];
 
-        _encodeAudioChannel = Channel.CreateUnbounded<(int, float[])>(new()
+        AudioSettings.OnAudioConfigurationChanged += OnAudioConfigurationChanged;
+
+        _encodeAudioChannel = Channel.CreateUnbounded<(int, int, int, int, float[])>(new()
         {
           SingleReader = true,
         });
@@ -135,6 +134,8 @@ namespace UMR
         {
           return false;
         }
+
+        AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigurationChanged;
       }
 
       if (_encodeVideoChannel != null)
@@ -167,12 +168,6 @@ namespace UMR
         return;
       }
 
-      // TODO: check sample rate
-      if (channels != _channels || data.Length != _channels * _audioBufferSize)
-      {
-        return;
-      }
-
       if (!TryGetAudioBuffer(out float[] buffer, data.Length))
       {
         return;
@@ -182,7 +177,7 @@ namespace UMR
       {
         _audioNextTime = AudioSettings.dspTime;
       }
-      double deltaTime = 1.0 * buffer.Length / channels / _sampleRate;
+      double deltaTime = 1.0 * data.Length / channels / _sampleRate;
       int gaps = 0;
       while (_audioNextTime + deltaTime / 2 <= AudioSettings.dspTime)
       {
@@ -193,7 +188,7 @@ namespace UMR
 
       data.CopyTo(buffer, 0);
 
-      if (!_encodeAudioChannel.Writer.TryWrite((gaps, buffer)))
+      if (!_encodeAudioChannel.Writer.TryWrite((gaps, channels, _sampleRate, data.Length / channels, buffer)))
       {
         _audioBuffers.Push(buffer);
       }
@@ -207,6 +202,8 @@ namespace UMR
 
         if (_encodeAudioChannel != null)
         {
+          AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigurationChanged;
+
           _encodeAudioChannel.Writer.TryComplete();
         }
 
@@ -246,6 +243,11 @@ namespace UMR
       {
         buffer.Dispose();
       }
+    }
+
+    private void OnAudioConfigurationChanged(bool _)
+    {
+      _sampleRate = AudioSettings.outputSampleRate;
     }
 
     private void OnEndCameraRendering(ScriptableRenderContext _, Camera camera)
@@ -310,30 +312,35 @@ namespace UMR
       _state = RecorderState.Idle;
     }
 
-    private bool TryGetAudioBuffer(out float[] buffer, int length)
+    private bool TryGetAudioBuffer(out float[] buffer, int size)
     {
-      if (_audioBuffers.TryPop(out buffer))
+      while (_audioBuffers.TryPop(out buffer))
       {
-        return true;
+        if (buffer.Length >= size)
+        {
+          return true;
+        }
+
+        _audioBufferBytes -= buffer.Length * sizeof(float);
       }
 
-      if (_audioBufferBytes + length * sizeof(float) > AudioBufferByteLimit)
+      if (_audioBufferBytes + size * sizeof(float) > AudioBufferByteLimit)
       {
         return false;
       }
 
-      buffer = new float[length];
+      buffer = new float[size];
 
-      _audioBufferBytes += length * sizeof(float);
+      _audioBufferBytes += size * sizeof(float);
 
       return true;
     }
 
-    private bool TryGetVideoBuffer(out NativeArray<byte> buffer, int length)
+    private bool TryGetVideoBuffer(out NativeArray<byte> buffer, int size)
     {
       while (_videoBuffers.TryPop(out buffer))
       {
-        if (buffer.Length >= length)
+        if (buffer.Length >= size)
         {
           return true;
         }
@@ -343,14 +350,14 @@ namespace UMR
         buffer.Dispose();
       }
 
-      if (_videoBufferBytes + length * sizeof(byte) > VideoBufferByteLimit)
+      if (_videoBufferBytes + size * sizeof(byte) > VideoBufferByteLimit)
       {
         return false;
       }
 
-      buffer = new(length, Allocator.Persistent);
+      buffer = new(size, Allocator.Persistent);
 
-      _videoBufferBytes += length * sizeof(byte);
+      _videoBufferBytes += size * sizeof(byte);
 
       return true;
     }
@@ -388,11 +395,11 @@ namespace UMR
 
     private async Task EncodeAudioThreadFunction()
     {
-      await foreach ((int gaps, float[] data) in _encodeAudioChannel.Reader.ReadAllAsync())
+      await foreach ((int gaps, int channels, int sampleRate, int samples, float[] data) in _encodeAudioChannel.Reader.ReadAllAsync())
       {
         for (int i = 0; i < gaps; i++)
         {
-          IntPtr gapPackets = Native.UMREncodeAudio(_encoder, _audioGap);
+          IntPtr gapPackets = Native.UMREncodeAudio(_encoder, 1, sampleRate, _audioGap.Length, _audioGap);
 
           if (gapPackets != IntPtr.Zero)
           {
@@ -400,7 +407,7 @@ namespace UMR
           }
         }
 
-        IntPtr dataPackets = Native.UMREncodeAudio(_encoder, data);
+        IntPtr dataPackets = Native.UMREncodeAudio(_encoder, channels, sampleRate, samples, data);
 
         _audioBuffers.Push(data);
 

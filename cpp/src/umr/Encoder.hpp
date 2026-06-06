@@ -21,7 +21,6 @@ namespace UMR {
       int sample_rate,
       int64_t audio_bit_rate,
       int channels,
-      int audio_buffer_size,
       AVCodecID video_codec_id,
       int width,
       int height,
@@ -30,7 +29,7 @@ namespace UMR {
 
     ~Encoder();
 
-    std::vector<AVPacket*>* encode_audio(float* data);
+    std::vector<AVPacket*>* encode_audio(int channels, int sample_rate, int samples, float* data);
     std::vector<AVPacket*>* encode_video(int width, int height, uint8_t* data, int64_t pts);
     std::vector<AVPacket*>* flush();
 
@@ -46,6 +45,8 @@ namespace UMR {
     AVFrame* m_video_frame = nullptr;
     SwsContext* m_sws_context = nullptr;
 
+    static bool get_channel_layout(int channels, AVChannelLayout* channel_layout);
+
     Encoder();
     Encoder(Encoder&& other) noexcept;
 
@@ -54,8 +55,7 @@ namespace UMR {
       AVCodecID codec_id,
       int sample_rate,
       int64_t bit_rate,
-      int channels,
-      int buffer_size
+      int channels
     );
     bool initialize_video(
       Muxer* muxer,
@@ -65,5 +65,7 @@ namespace UMR {
       int64_t bit_rate
     );
     bool encode(std::vector<AVPacket*>* packets, AVCodecContext* codec_context, AVFrame* frame);
+    int get_in_channels();
+    int get_in_sample_rate();
   };
 }

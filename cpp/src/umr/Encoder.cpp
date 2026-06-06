@@ -1,3 +1,7 @@
+extern "C" {
+#include <libavutil/opt.h>
+}
+
 #include <utility>
 
 #include "Encoder.hpp"
@@ -22,7 +26,6 @@ UMR::Encoder* UMR::Encoder::create(
   int sample_rate,
   int64_t audio_bit_rate,
   int channels,
-  int audio_buffer_size,
   AVCodecID video_codec_id,
   int width,
   int height,
@@ -35,7 +38,7 @@ UMR::Encoder* UMR::Encoder::create(
   Encoder encoder;
 
   if (muxer->audio() && audio_codec_id != AVCodecID::AV_CODEC_ID_NONE) {
-    if (!encoder.initialize_audio(muxer, audio_codec_id, sample_rate, audio_bit_rate, channels, audio_buffer_size)) {
+    if (!encoder.initialize_audio(muxer, audio_codec_id, sample_rate, audio_bit_rate, channels)) {
       return nullptr;
     }
   }
@@ -66,9 +69,9 @@ UMR::Encoder::~Encoder() {
 
   if (m_audio_buffers) {
     for (int i = 0; i < m_audio_codec_context->ch_layout.nb_channels; i++) {
-      delete m_audio_buffers[i];
+      delete[] m_audio_buffers[i];
     }
-    delete m_audio_buffers;
+    delete[] m_audio_buffers;
   }
 
   if (m_audio_fifo) {
@@ -88,26 +91,57 @@ UMR::Encoder::~Encoder() {
   }
 }
 
-std::vector<AVPacket*>* UMR::Encoder::encode_audio(float* data) {
+std::vector<AVPacket*>* UMR::Encoder::encode_audio(int channels, int sample_rate, int samples, float* data) {
   if (!m_audio_codec_context) {
     return nullptr;
+  }
+
+  if (!m_swr_context || channels != get_in_channels() || sample_rate != get_in_sample_rate()) {
+    AVChannelLayout channel_layout;
+    if (!get_channel_layout(channels, &channel_layout)) {
+      return nullptr;
+    }
+    if (swr_alloc_set_opts2(
+      &m_swr_context,
+      &m_audio_codec_context->ch_layout,
+      m_audio_codec_context->sample_fmt,
+      m_audio_codec_context->sample_rate,
+      &channel_layout,
+      AVSampleFormat::AV_SAMPLE_FMT_FLT,
+      sample_rate,
+      0,
+      nullptr
+    ) < 0) {
+      return nullptr;
+    }
+    if (swr_init(m_swr_context) < 0) {
+      return nullptr;
+    }
+  }
+
+  if (samples > m_audio_buffer_size) {
+    m_audio_buffer_size = samples;
+    for (int i = 0; i < m_audio_codec_context->ch_layout.nb_channels; i++) {
+      delete[] m_audio_buffers[i];
+      m_audio_buffers[i] = new float[m_audio_buffer_size];
+    }
   }
 
   if (swr_convert(
     m_swr_context,
     reinterpret_cast<uint8_t**>(m_audio_buffers),
-    m_audio_buffer_size,
+    samples,
     reinterpret_cast<uint8_t**>(&data),
-    m_audio_buffer_size
-  ) != m_audio_buffer_size) {
+    samples
+  ) != samples) {
     return nullptr;
   }
 
   if (av_audio_fifo_write(
     m_audio_fifo,
     reinterpret_cast<void**>(m_audio_buffers),
-    m_audio_buffer_size
-  ) != m_audio_buffer_size) {
+    samples
+  ) != samples) {
     return nullptr;
   }
 
@@ -226,6 +260,47 @@ std::vector<AVPacket*>* UMR::Encoder::flush() {
   return new std::vector<AVPacket*>(std::move(packets));
 }
 
+bool UMR::Encoder::get_channel_layout(int channels, AVChannelLayout* channel_layout) {
+  switch (channels) {
+    case 1:
+    {
+      *channel_layout = AV_CHANNEL_LAYOUT_MONO;
+      break;
+    }
+    case 2:
+    {
+      *channel_layout = AV_CHANNEL_LAYOUT_STEREO;
+      break;
+    }
+    case 4:
+    {
+      *channel_layout = AV_CHANNEL_LAYOUT_QUAD;
+      break;
+    }
+    case 5:
+    {
+      *channel_layout = AV_CHANNEL_LAYOUT_5POINT0;
+      break;
+    }
+    case 6:
+    {
+      *channel_layout = AV_CHANNEL_LAYOUT_5POINT1_BACK;
+      break;
+    }
+    case 8:
+    {
+      *channel_layout = AV_CHANNEL_LAYOUT_7POINT1;
+      break;
+    }
+    default:
+    {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 UMR::Encoder::Encoder() {}
 
 UMR::Encoder::Encoder(Encoder&& other) noexcept:
@@ -256,8 +331,7 @@ bool UMR::Encoder::initialize_audio(
   AVCodecID codec_id,
   int sample_rate,
   int64_t bit_rate,
-  int channels,
-  int buffer_size
+  int channels
 ) {
   if (!muxer) {
     return false;
@@ -277,41 +351,8 @@ bool UMR::Encoder::initialize_audio(
   m_audio_codec_context->time_base = {.num = 1, .den = m_audio_codec_context->sample_rate};
   m_audio_codec_context->sample_fmt = AVSampleFormat::AV_SAMPLE_FMT_FLTP;
   AVChannelLayout channel_layout;
-  switch (channels) {
-    case 1:
-    {
-      channel_layout = AV_CHANNEL_LAYOUT_MONO;
-      break;
-    }
-    case 2:
-    {
-      channel_layout = AV_CHANNEL_LAYOUT_STEREO;
-      break;
-    }
-    case 4:
-    {
-      channel_layout = AV_CHANNEL_LAYOUT_QUAD;
-      break;
-    }
-    case 5:
-    {
-      channel_layout = AV_CHANNEL_LAYOUT_5POINT0;
-      break;
-    }
-    case 6:
-    {
-      channel_layout = AV_CHANNEL_LAYOUT_5POINT1_BACK;
-      break;
-    }
-    case 8:
-    {
-      channel_layout = AV_CHANNEL_LAYOUT_7POINT1;
-      break;
-    }
-    default:
-    {
-      return false;
-    }
+  if (!get_channel_layout(channels, &channel_layout)) {
+    return false;
   }
   if (av_channel_layout_copy(&m_audio_codec_context->ch_layout, &channel_layout) < 0) {
     return false;
@@ -338,24 +379,6 @@ bool UMR::Encoder::initialize_audio(
     return false;
   }
 
-  // TODO: handle variable channel layout/sample rate?
-  if (swr_alloc_set_opts2(
-    &m_swr_context,
-    &m_audio_codec_context->ch_layout,
-    m_audio_codec_context->sample_fmt,
-    m_audio_codec_context->sample_rate,
-    &m_audio_codec_context->ch_layout,
-    AVSampleFormat::AV_SAMPLE_FMT_FLT,
-    m_audio_codec_context->sample_rate,
-    0,
-    nullptr
-  ) < 0) {
-    return false;
-  }
-  if (swr_init(m_swr_context) < 0) {
-    return false;
-  }
-
   m_audio_fifo = av_audio_fifo_alloc(
     m_audio_codec_context->sample_fmt,
     m_audio_codec_context->ch_layout.nb_channels,
@@ -365,12 +388,7 @@ bool UMR::Encoder::initialize_audio(
     return false;
   }
 
-  // TODO: handle variable buffer size?
-  m_audio_buffer_size = buffer_size;
-  m_audio_buffers = new float* [m_audio_codec_context->ch_layout.nb_channels];
-  for (int i = 0; i < m_audio_codec_context->ch_layout.nb_channels; i++) {
-    m_audio_buffers[i] = new float[m_audio_buffer_size];
-  }
+  m_audio_buffers = new float* [m_audio_codec_context->ch_layout.nb_channels] {};
 
   if (!muxer->add_stream(m_audio_codec_context)) {
     return false;
@@ -414,8 +432,8 @@ bool UMR::Encoder::initialize_video(
     m_video_codec_context->height = height;
     m_video_codec_context->bit_rate = bit_rate;
     m_video_codec_context->time_base = {.num = 1, .den = 1000};
-    // m_codec_context->gop_size = gop_size;
-    // m_codec_context->max_b_frames = max_b_frames;
+    // m_video_codec_context->gop_size = gop_size;
+    // m_video_codec_context->max_b_frames = max_b_frames;
     m_video_codec_context->pix_fmt = AVPixelFormat::AV_PIX_FMT_YUV420P;
     if (muxer->global_header()) {
       m_video_codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
@@ -478,4 +496,30 @@ bool UMR::Encoder::encode(std::vector<AVPacket*>* packets, AVCodecContext* codec
   }
 
   return true;
+}
+
+int UMR::Encoder::get_in_channels() {
+  if (!m_swr_context) {
+    return 0;
+  }
+
+  AVChannelLayout channel_layout;
+  if (av_opt_get_chlayout(m_swr_context, "in_chlayout", 0, &channel_layout) < 0) {
+    return 0;
+  }
+
+  return channel_layout.nb_channels;
+}
+
+int UMR::Encoder::get_in_sample_rate() {
+  if (!m_swr_context) {
+    return 0;
+  }
+
+  int64_t sample_rate;
+  if (av_opt_get_int(m_swr_context, "in_sample_rate", 0, &sample_rate) < 0) {
+    return 0;
+  }
+
+  return sample_rate;
 }

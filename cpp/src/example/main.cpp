@@ -56,7 +56,6 @@ static void generate_media_file(bool audio, bool video) {
     audio ? SAMPLE_RATE : 0,
     audio ? AUDIO_BIT_RATE : 0,
     audio ? CHANNELS : 0,
-    audio ? AUDIO_BUFFER_SIZE : 0,
     video ? VIDEO_CODEC_ID : 0,
     video ? WIDTH : 0,
     video ? HEIGHT : 0,
@@ -68,7 +67,7 @@ static void generate_media_file(bool audio, bool video) {
     float* audio_data = new float[CHANNELS * AUDIO_BUFFER_SIZE];
     for (int64_t pts = 0; pts < SAMPLE_RATE * DURATION / 1000; pts += AUDIO_BUFFER_SIZE) {
       generate_audio_data(audio_data, pts);
-      void* packets = umr_encode_audio(encoder, audio_data);
+      void* packets = umr_encode_audio(encoder, CHANNELS, SAMPLE_RATE, AUDIO_BUFFER_SIZE, audio_data);
       bool mux_audio_success = umr_mux(muxer, packets);
       std::cout << "umr mux audio (" << pts << "): " << (mux_audio_success ? "success" : "failure") << "\n";
     }

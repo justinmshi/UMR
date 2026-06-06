@@ -10,7 +10,6 @@ uint8_t umr_begin(
   int32_t sample_rate,
   int64_t audio_bit_rate,
   int32_t channels,
-  int32_t audio_buffer_size,
   int32_t video_codec_id,
   int32_t width,
   int32_t height,
@@ -29,7 +28,6 @@ uint8_t umr_begin(
     sample_rate,
     audio_bit_rate,
     channels,
-    audio_buffer_size,
     static_cast<AVCodecID>(video_codec_id),
     width,
     height,
@@ -45,12 +43,12 @@ uint8_t umr_begin(
   return cast_muxer->begin();
 }
 
-void* umr_encode_audio(void* encoder, float* data) {
+void* umr_encode_audio(void* encoder, int32_t channels, int32_t sample_rate, int32_t samples, float* data) {
   if (!encoder) {
     return nullptr;
   }
 
-  return static_cast<UMR::Encoder*>(encoder)->encode_audio(data);
+  return static_cast<UMR::Encoder*>(encoder)->encode_audio(channels, sample_rate, samples, data);
 }
 
 void* umr_encode_video(void* encoder, int32_t width, int32_t height, uint8_t* data, int64_t pts) {

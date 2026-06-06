@@ -14,14 +14,13 @@ namespace UMR
       int sampleRate,
       long audioBitRate,
       int channels,
-      int audioBufferSize,
       int videoCodecID,
       int width,
       int height,
       long videoBitRate
     );
     [DllImport("umr", EntryPoint = "umr_encode_audio")]
-    public static extern IntPtr UMREncodeAudio(IntPtr encoder, float[] data);
+    public static extern IntPtr UMREncodeAudio(IntPtr encoder, int channels, int sampleRate, int samples, float[] data);
     [DllImport("umr", EntryPoint = "umr_encode_video")]
     public static extern IntPtr UMREncodeVideo(IntPtr encoder, int width, int height, IntPtr data, long pts);
     [DllImport("umr", EntryPoint = "umr_mux")]
